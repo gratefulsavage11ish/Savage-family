@@ -346,7 +346,7 @@ class TestBootstrap(Base):
         self.assertEqual(self.snapshot(), [])
 
     def test_script_exists_and_small(self):
-        s = os.path.join(SRC, "..", "scripts", "bootstrap-termux.sh")
+        s = os.path.join(os.path.dirname(SRC), "scripts", "bootstrap-termux.sh")
         self.assertTrue(os.access(s, os.X_OK))
         self.assertLess(len(open(s).read().splitlines()), 20)
 
