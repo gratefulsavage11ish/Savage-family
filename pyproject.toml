@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "savage-family"
+version = "0.1.0"
+description = "Phone-first local Savage AI agent family"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+savage = "savage.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["savage*"]
