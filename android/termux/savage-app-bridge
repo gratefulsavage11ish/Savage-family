@@ -3,7 +3,7 @@ set -u
 
 ROOT="/data/local/savage-ai"
 IMAGE="/mnt/media_rw/FFFF-E33D/savage-ai.img"
-RUNNER="$HOME/.local/lib/savage-app-runner.py"
+RUNNER="$HOME/.local/lib/savage-app-runner.py"\nRUNTIME="$HOME/.local/lib/savage_model_runtime.py"
 
 ensure_mount() {
     if [ -f "$ROOT/savage-family/savage/cli.py" ]; then
@@ -64,6 +64,13 @@ case "$mode" in
 
         echo "--- MEMORY ---"
         [ -f "$ROOT/memory/savage.db" ] && ls -lh "$ROOT/memory/savage.db" || echo "memory: MISSING"
+
+        echo "--- MODEL RUNTIME ---"
+        if [ -f "$RUNTIME" ]; then
+            python "$RUNTIME" status
+        else
+            echo "runtime: MISSING"
+        fi
         ;;
 
     prompt)
@@ -76,6 +83,9 @@ case "$mode" in
 
     stop)
         pkill -INT -f "$ROOT/bin/llama/llama-cli" 2>/dev/null || true
+        if [ -f "$RUNTIME" ]; then
+            python "$RUNTIME" stop 2>/dev/null || true
+        fi
         echo "STOP sent"
         ;;
 
