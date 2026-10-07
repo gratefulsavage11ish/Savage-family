@@ -309,21 +309,13 @@ public class MainActivity extends Activity {
         String b64 = Base64.encodeToString(
                 prompt.getBytes(StandardCharsets.UTF_8), Base64.NO_WRAP);
 
-        String pyCode =
-                "import os,base64;"
-                + "from savage.config import Config;"
-                + "from savage.cli import App;"
-                + "p=base64.b64decode(os.environ[\"SAVAGE_PROMPT_B64\"]).decode(\"utf-8\");"
-                + "a=App(Config());"
-                + "r=a.cmd.handle(a.sid,p);"
-                + "print(r[\"output\"]);"
-                + "a.close()";
-
         String script =
-                "export SAVAGE_AI_ROOT='" + SAVAGE_ROOT + "'; "
-                + "export PYTHONPATH='" + SAVAGE_ROOT + "/savage-family'; "
-                + "export SAVAGE_PROMPT_B64='" + b64 + "'; "
-                + "python -c '" + pyCode + "'";
+                "export SAVAGE_PROMPT_B64='" + b64 + "'; "
+                + "BRIDGE=\"$HOME/.local/bin/savage-app-bridge\"; "
+                + "if [ ! -x \"$BRIDGE\" ]; then "
+                + "echo 'SAVAGE BRIDGE MISSING: install it from Termux'; exit 127; "
+                + "fi; "
+                + "exec \"$BRIDGE\" prompt";
 
         runInTermux("prompt", script);
     }
@@ -333,19 +325,11 @@ public class MainActivity extends Activity {
         backend.setText("backend: Termux");
 
         String script =
-                "echo '--- TERMUX ---'; "
-                + "echo \"prefix=$PREFIX\"; "
-                + "echo \"python=$(command -v python 2>/dev/null || true)\"; "
-                + "python -V 2>&1 || true; "
-                + "echo '--- ROOT ---'; "
-                + "su -c id 2>&1 || true; "
-                + "echo '--- SAVAGE ---'; "
-                + "if [ -f " + SAVAGE_ROOT + "/savage-family/savage/cli.py ]; "
-                + "then echo 'core: READY'; else echo 'core: MISSING'; fi; "
-                + "if [ -f " + SAVAGE_ROOT + "/models/Qwen3-1.7B-abliterated-Q4_K_M.gguf ]; "
-                + "then echo 'model: READY'; else echo 'model: MISSING'; fi; "
-                + "if [ -x " + SAVAGE_ROOT + "/bin/llama/llama-cli ]; "
-                + "then echo 'llama.cpp: READY'; else echo 'llama.cpp: MISSING'; fi";
+                "BRIDGE=\"$HOME/.local/bin/savage-app-bridge\"; "
+                + "if [ ! -x \"$BRIDGE\" ]; then "
+                + "echo 'SAVAGE BRIDGE MISSING: install it from Termux'; exit 127; "
+                + "fi; "
+                + "exec \"$BRIDGE\" status";
 
         runInTermux("status", script);
     }
@@ -354,8 +338,10 @@ public class MainActivity extends Activity {
         send.setEnabled(true);
         status.setText("STOPPING…");
         runInTermux("stop",
-                "pkill -INT -f '/data/local/savage-ai/bin/llama/llama-cli' 2>/dev/null || true; "
-                + "echo 'STOP sent'");
+                "BRIDGE=\"$HOME/.local/bin/savage-app-bridge\"; "
+                + "if [ -x \"$BRIDGE\" ]; then exec \"$BRIDGE\" stop; "
+                + "else pkill -INT -f '/data/local/savage-ai/bin/llama/llama-cli' 2>/dev/null || true; "
+                + "echo 'STOP sent'; fi");
     }
 
     private void runInTermux(String kind, String script) {
