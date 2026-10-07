@@ -384,10 +384,54 @@ public class MainActivity extends Activity {
                 + "fi; fi; ";
     }
 
+    private Process startRootProcess(String command) throws Exception {
+        // Android app processes do not inherit Termux's PATH. KernelSU/Magisk-style
+        // su may still be mounted at an absolute system path, so probe those first.
+        String[] candidates = new String[] {
+                "/system/bin/su",
+                "/system/xbin/su",
+                "/sbin/su",
+                "/su/bin/su",
+                "/data/adb/ksu/bin/su",
+                "/debug_ramdisk/su"
+        };
+
+        Exception last = null;
+
+        for (String candidate : candidates) {
+            try {
+                ProcessBuilder pb = new ProcessBuilder(candidate, "-c", command);
+                pb.redirectErrorStream(true);
+                return pb.start();
+            } catch (Exception e) {
+                last = e;
+            }
+        }
+
+        // Final fallback: ask Android's system shell to resolve su from a broad PATH.
+        try {
+            ProcessBuilder pb = new ProcessBuilder(
+                    "/system/bin/sh",
+                    "-c",
+                    "export PATH=/system/bin:/system/xbin:/sbin:/su/bin:/data/adb/ksu/bin:$PATH; " +
+                    "exec su -c \"$1\"",
+                    "sh",
+                    command
+            );
+            pb.redirectErrorStream(true);
+            return pb.start();
+        } catch (Exception e) {
+            last = e;
+        }
+
+        throw new java.io.IOException(
+                "No root su binary found. Checked KernelSU/system su paths.",
+                last
+        );
+    }
+
     private String runRoot(String command) throws Exception {
-        ProcessBuilder pb = new ProcessBuilder("su", "-c", command);
-        pb.redirectErrorStream(true);
-        Process process = pb.start();
+        Process process = startRootProcess(command);
         currentProcess = process;
 
         StringBuilder sb = new StringBuilder();
@@ -416,10 +460,7 @@ public class MainActivity extends Activity {
 
         worker.execute(() -> {
             try {
-                new ProcessBuilder(
-                        "su", "-c",
-                        "pkill -INT -f '/data/local/savage-ai/bin/llama/llama-cli' 2>/dev/null || true"
-                ).start().waitFor();
+                runRoot("pkill -INT -f '/data/local/savage-ai/bin/llama/llama-cli' 2>/dev/null || true");
             } catch (Exception ignored) {
             }
 
