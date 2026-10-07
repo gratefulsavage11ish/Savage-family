@@ -390,7 +390,11 @@ public class MainActivity extends Activity {
         intent.putExtra(EXTRA_PENDING_INTENT, pendingIntent);
 
         try {
-            startService(intent);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(intent);
+            } else {
+                startService(intent);
+            }
         } catch (SecurityException e) {
             status.setText("TERMUX SETUP");
             backend.setText("backend: blocked");
