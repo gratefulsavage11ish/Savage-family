@@ -1,0 +1,86 @@
+#!/data/data/com.termux/files/usr/bin/bash
+set -u
+
+ROOT="/data/local/savage-ai"
+IMAGE="/mnt/media_rw/FFFF-E33D/savage-ai.img"
+RUNNER="$HOME/.local/lib/savage-app-runner.py"
+
+ensure_mount() {
+    if [ -f "$ROOT/savage-family/savage/cli.py" ]; then
+        return 0
+    fi
+
+    su -c "
+        ROOT='$ROOT'
+        IMG='$IMAGE'
+
+        if [ ! -f \"\$IMG\" ]; then
+            IMG=\$(find /mnt/media_rw -maxdepth 3 -type f -name savage-ai.img 2>/dev/null | head -n1)
+        fi
+
+        [ -n \"\$IMG\" ] && [ -f \"\$IMG\" ] || {
+            echo 'SAVAGE ERROR: savage-ai.img not found'
+            exit 20
+        }
+
+        mkdir -p \"\$ROOT\"
+
+        if ! grep -qs \" \$ROOT \" /proc/mounts; then
+            LOOP=\$(losetup -j \"\$IMG\" 2>/dev/null | head -n1 | cut -d: -f1)
+
+            if [ -z \"\$LOOP\" ]; then
+                LOOP=\$(losetup -f) || exit 21
+                losetup \"\$LOOP\" \"\$IMG\" || exit 22
+            fi
+
+            mount -t ext4 -o rw,exec \"\$LOOP\" \"\$ROOT\" || exit 23
+        fi
+    " || return $?
+
+    [ -f "$ROOT/savage-family/savage/cli.py" ]
+}
+
+ensure_mount || exit $?
+
+export SAVAGE_AI_ROOT="$ROOT"
+export PYTHONPATH="$ROOT/savage-family"
+
+mode="${1:-status}"
+
+case "$mode" in
+    status)
+        echo "--- TERMUX ---"
+        echo "prefix=$PREFIX"
+        echo "python=$(command -v python 2>/dev/null || true)"
+        python -V 2>&1 || true
+
+        echo "--- ROOT ---"
+        su -c id 2>&1 || true
+
+        echo "--- SAVAGE ---"
+        [ -f "$ROOT/savage-family/savage/cli.py" ] && echo "core: READY" || echo "core: MISSING"
+        [ -f "$ROOT/models/Qwen3-1.7B-abliterated-Q4_K_M.gguf" ] && echo "model: READY" || echo "model: MISSING"
+        [ -x "$ROOT/bin/llama/llama-cli" ] && echo "llama.cpp: READY" || echo "llama.cpp: MISSING"
+
+        echo "--- MEMORY ---"
+        [ -f "$ROOT/memory/savage.db" ] && ls -lh "$ROOT/memory/savage.db" || echo "memory: MISSING"
+        ;;
+
+    prompt)
+        [ -f "$RUNNER" ] || {
+            echo "SAVAGE ERROR: runner missing: $RUNNER"
+            exit 24
+        }
+        exec python "$RUNNER"
+        ;;
+
+    stop)
+        pkill -INT -f "$ROOT/bin/llama/llama-cli" 2>/dev/null || true
+        echo "STOP sent"
+        ;;
+
+    *)
+        echo "SAVAGE ERROR: unknown bridge mode: $mode"
+        exit 25
+        ;;
+esac
