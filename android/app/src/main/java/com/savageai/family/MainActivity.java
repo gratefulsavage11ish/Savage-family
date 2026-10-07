@@ -1,6 +1,9 @@
 package com.savageai.family;
 
 import android.app.Activity;
+import android.app.PendingIntent;
+import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.graphics.Insets;
 import android.graphics.Typeface;
@@ -9,7 +12,6 @@ import android.os.Build;
 import android.os.Bundle;
 import android.util.Base64;
 import android.view.Gravity;
-import android.view.View;
 import android.view.Window;
 import android.view.WindowInsets;
 import android.view.WindowManager;
@@ -19,14 +21,26 @@ import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
+import java.lang.ref.WeakReference;
 import java.nio.charset.StandardCharsets;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class MainActivity extends Activity {
     private static final String SAVAGE_ROOT = "/data/local/savage-ai";
+
+    private static final String TERMUX_PERMISSION = "com.termux.permission.RUN_COMMAND";
+    private static final String TERMUX_PACKAGE = "com.termux";
+    private static final String TERMUX_SERVICE = "com.termux.app.RunCommandService";
+    private static final String TERMUX_ACTION = "com.termux.RUN_COMMAND";
+    private static final String EXTRA_PATH = "com.termux.RUN_COMMAND_PATH";
+    private static final String EXTRA_ARGUMENTS = "com.termux.RUN_COMMAND_ARGUMENTS";
+    private static final String EXTRA_WORKDIR = "com.termux.RUN_COMMAND_WORKDIR";
+    private static final String EXTRA_BACKGROUND = "com.termux.RUN_COMMAND_BACKGROUND";
+    private static final String EXTRA_PENDING_INTENT = "com.termux.RUN_COMMAND_PENDING_INTENT";
+
+    private static final int REQUEST_TERMUX_PERMISSION = 7001;
+    private static final AtomicInteger EXECUTION_ID = new AtomicInteger(1000);
+    private static WeakReference<MainActivity> activeActivity = new WeakReference<>(null);
 
     private static final int BG = Color.rgb(6, 11, 15);
     private static final int PANEL = Color.rgb(13, 23, 29);
@@ -36,9 +50,6 @@ public class MainActivity extends Activity {
     private static final int ACCENT = Color.rgb(105, 232, 215);
     private static final int ACCENT_DARK = Color.rgb(21, 69, 65);
     private static final int DANGER = Color.rgb(255, 126, 126);
-
-    private final ExecutorService worker = Executors.newSingleThreadExecutor();
-    private volatile Process currentProcess;
 
     private TextView output;
     private TextView status;
@@ -60,7 +71,6 @@ public class MainActivity extends Activity {
         root.setOrientation(LinearLayout.VERTICAL);
         root.setBackgroundColor(BG);
         root.setPadding(dp(16), dp(10), dp(16), dp(12));
-
         applyInsets(root);
 
         LinearLayout header = new LinearLayout(this);
@@ -75,11 +85,11 @@ public class MainActivity extends Activity {
         header.addView(title);
 
         TextView subtitle = new TextView(this);
-        subtitle.setText("LOCAL ROOT AGENT");
+        subtitle.setText("TERMUX-NATIVE ROOT AGENT");
         subtitle.setTextColor(MUTED);
         subtitle.setTextSize(11);
         subtitle.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
-        subtitle.setLetterSpacing(0.12f);
+        subtitle.setLetterSpacing(0.10f);
         header.addView(subtitle);
 
         LinearLayout statusRow = new LinearLayout(this);
@@ -101,7 +111,7 @@ public class MainActivity extends Activity {
         statusRow.addView(status);
 
         backend = new TextView(this);
-        backend.setText("backend: probing");
+        backend.setText("backend: Termux");
         backend.setTextColor(MUTED);
         backend.setTextSize(11);
         backend.setTypeface(Typeface.MONOSPACE);
@@ -129,7 +139,7 @@ public class MainActivity extends Activity {
         output.setTextColor(TEXT);
         output.setTextSize(13);
         output.setTypeface(Typeface.MONOSPACE);
-        output.setText("Savage Android controller ready.\n");
+        output.setText("Savage Android frontend ready.\nBackend mode: native Termux RUN_COMMAND.\n");
         output.setTextIsSelectable(true);
         output.setPadding(0, dp(8), 0, dp(4));
         output.setLineSpacing(0f, 1.10f);
@@ -142,9 +152,8 @@ public class MainActivity extends Activity {
         consoleCard.addView(scroll, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
 
-        LinearLayout.LayoutParams consoleLp = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f);
-        root.addView(consoleCard, consoleLp);
+        root.addView(consoleCard, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
 
         input = new EditText(this);
         input.setHint("Ask Savage…  e.g. recon: auto: inspect memory");
@@ -191,15 +200,49 @@ public class MainActivity extends Activity {
         stop.setOnClickListener(v -> stopInference());
         clear.setOnClickListener(v -> output.setText(""));
 
-        checkEnvironment();
+        ensureTermuxPermission();
+    }
+
+    @Override
+    protected void onStart() {
+        super.onStart();
+        activeActivity = new WeakReference<>(this);
+    }
+
+    @Override
+    protected void onStop() {
+        MainActivity current = activeActivity.get();
+        if (current == this) activeActivity.clear();
+        super.onStop();
+    }
+
+    private void ensureTermuxPermission() {
+        if (Build.VERSION.SDK_INT >= 23 &&
+                checkSelfPermission(TERMUX_PERMISSION) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{TERMUX_PERMISSION}, REQUEST_TERMUX_PERMISSION);
+        } else {
+            checkEnvironment();
+        }
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == REQUEST_TERMUX_PERMISSION) {
+            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                append("\nTermux command permission granted.\n");
+                checkEnvironment();
+            } else {
+                status.setText("TERMUX PERMISSION");
+                backend.setText("backend: blocked");
+                append("\nGrant Savage AI the 'Run commands in Termux environment' permission in App info.\n");
+            }
+        }
     }
 
     private void applyInsets(LinearLayout root) {
         root.setOnApplyWindowInsetsListener((v, insets) -> {
-            int left = dp(16);
-            int top = dp(10);
-            int right = dp(16);
-            int bottom = dp(12);
+            int left = dp(16), top = dp(10), right = dp(16), bottom = dp(12);
 
             if (Build.VERSION.SDK_INT >= 30) {
                 Insets bars = insets.getInsets(WindowInsets.Type.systemBars());
@@ -263,71 +306,6 @@ public class MainActivity extends Activity {
         append("\n› " + prompt + "\n");
         setBusy(true);
 
-        worker.execute(() -> {
-            String result;
-            try {
-                result = runRoot(buildPromptCommand(prompt));
-            } catch (Exception e) {
-                result = "ERROR: " + e;
-            }
-
-            final String finalResult = result;
-            runOnUiThread(() -> {
-                append(finalResult + "\n");
-                setBusy(false);
-            });
-        });
-    }
-
-    private void checkEnvironment() {
-        status.setText("CHECKING…");
-        backend.setText("backend: probing");
-
-        worker.execute(() -> {
-            String command = ensureMounted()
-                    + "echo '--- ROOT ---'; id; "
-                    + "echo '--- SAVAGE ---'; "
-                    + "if [ -f " + SAVAGE_ROOT + "/savage-family/savage/cli.py ]; "
-                    + "then echo 'core: READY'; else echo 'core: MISSING'; fi; "
-                    + "if [ -f " + SAVAGE_ROOT + "/models/Qwen3-1.7B-abliterated-Q4_K_M.gguf ]; "
-                    + "then echo 'model: READY'; else echo 'model: MISSING'; fi; "
-                    + "if [ -x " + SAVAGE_ROOT + "/bin/llama/llama-cli ]; "
-                    + "then echo 'llama.cpp: READY'; else echo 'llama.cpp: MISSING'; fi; "
-                    + pythonResolver()
-                    + "echo \"python: READY ($PY)\"; \"$PY\" -V 2>&1";
-
-            String result;
-            try {
-                result = runRoot(command);
-            } catch (Exception e) {
-                result = "Root check failed: " + e;
-            }
-
-            final String finalResult = result;
-            runOnUiThread(() -> {
-                boolean ok = finalResult.contains("uid=0")
-                        && finalResult.contains("core: READY")
-                        && finalResult.contains("model: READY")
-                        && finalResult.contains("llama.cpp: READY")
-                        && finalResult.contains("python: READY");
-
-                status.setText(ok ? "ROOT • READY" : "SETUP ISSUE");
-                status.setBackground(roundRect(
-                        ok ? ACCENT_DARK : Color.rgb(84, 43, 46),
-                        ok ? ACCENT_DARK : Color.rgb(84, 43, 46),
-                        99));
-
-                String py = extractPythonPath(finalResult);
-                backend.setText(ok
-                        ? (py.isEmpty() ? "backend: local" : "backend: " + shortPath(py))
-                        : "backend: unavailable");
-
-                append(finalResult + "\n");
-            });
-        });
-    }
-
-    private String buildPromptCommand(String prompt) {
         String b64 = Base64.encodeToString(
                 prompt.getBytes(StandardCharsets.UTF_8), Base64.NO_WRAP);
 
@@ -341,188 +319,165 @@ public class MainActivity extends Activity {
                 + "print(r[\"output\"]);"
                 + "a.close()";
 
-        return ensureMounted()
-                + pythonResolver()
-                + "export SAVAGE_AI_ROOT='" + SAVAGE_ROOT + "'; "
+        String script =
+                "export SAVAGE_AI_ROOT='" + SAVAGE_ROOT + "'; "
                 + "export PYTHONPATH='" + SAVAGE_ROOT + "/savage-family'; "
                 + "export SAVAGE_PROMPT_B64='" + b64 + "'; "
-                + "\"$PY\" -c '" + pyCode + "' 2>&1";
+                + "python -c '" + pyCode + "'";
+
+        runInTermux("prompt", script);
     }
 
-    private String pythonResolver() {
-        // Termux Python depends on libraries under $PREFIX/lib. A root shell started
-        // from a normal APK does not inherit Termux's environment, so establish it
-        // before probing Python.
-        return "TERMUX_PREFIX='/data/data/com.termux/files/usr'; "
-                + "if [ ! -d \"$TERMUX_PREFIX\" ] && [ -d /data/user/0/com.termux/files/usr ]; then "
-                + "TERMUX_PREFIX='/data/user/0/com.termux/files/usr'; fi; "
-                + "export PREFIX=\"$TERMUX_PREFIX\"; "
-                + "export HOME=\"$(dirname \"$TERMUX_PREFIX\")/home\"; "
-                + "export TMPDIR=\"$HOME/.tmp\"; mkdir -p \"$TMPDIR\" 2>/dev/null || true; "
-                + "export LD_LIBRARY_PATH=\"$TERMUX_PREFIX/lib:$LD_LIBRARY_PATH\"; "
-                + "export PATH=\"$TERMUX_PREFIX/bin:/system/bin:/system/xbin:/sbin:$PATH\"; "
-                + "PY=''; "
-                + "for P in "
-                + SAVAGE_ROOT + "/venv/bin/python3 "
-                + SAVAGE_ROOT + "/venv/bin/python "
-                + "\"$TERMUX_PREFIX/bin/python3\" "
-                + "\"$TERMUX_PREFIX/bin/python\" "
-                + "\"$TERMUX_PREFIX/bin/python3.13\" "
-                + "\"$TERMUX_PREFIX/bin/python3.12\" "
-                + "\"$TERMUX_PREFIX/bin/python3.11\"; do "
-                + "[ -e \"$P\" ] || continue; "
-                + "if \"$P\" -V >/dev/null 2>&1; then PY=\"$P\"; break; fi; "
-                + "done; "
-                + "if [ -z \"$PY\" ]; then "
-                + "for P in \"$TERMUX_PREFIX\"/bin/python3.*; do "
-                + "[ -e \"$P\" ] || continue; "
-                + "if \"$P\" -V >/dev/null 2>&1; then PY=\"$P\"; break; fi; "
-                + "done; fi; "
-                + "if [ -z \"$PY\" ]; then "
-                + "echo '__SAVAGE_ERROR__: Python exists but could not start'; "
-                + "echo 'prefix:' \"$TERMUX_PREFIX\"; "
-                + "ls -l \"$TERMUX_PREFIX\"/bin/python* 2>&1 | head -20; "
-                + "PTEST=$(ls \"$TERMUX_PREFIX\"/bin/python3* 2>/dev/null | head -n1); "
-                + "if [ -n \"$PTEST\" ]; then echo 'python probe:'; \"$PTEST\" -V 2>&1; fi; "
-                + "exit 127; "
-                + "fi; ";
-    }
+    private void checkEnvironment() {
+        status.setText("CHECKING…");
+        backend.setText("backend: Termux");
 
-    private String ensureMounted() {
-        return "if [ ! -f " + SAVAGE_ROOT + "/savage-family/savage/cli.py ]; then "
-                + "IMG=$(find /mnt/media_rw -maxdepth 2 -type f -name savage-ai.img 2>/dev/null | head -n1); "
-                + "if [ -n \"$IMG\" ]; then "
-                + "mkdir -p " + SAVAGE_ROOT + "; "
-                + "LOOP=$(losetup -j \"$IMG\" 2>/dev/null | head -n1 | cut -d: -f1); "
-                + "if [ -z \"$LOOP\" ]; then LOOP=$(losetup -f); losetup \"$LOOP\" \"$IMG\"; fi; "
-                + "mount -t ext4 -o rw,exec \"$LOOP\" " + SAVAGE_ROOT + " 2>/dev/null || true; "
-                + "fi; fi; ";
-    }
+        String script =
+                "echo '--- TERMUX ---'; "
+                + "echo \"prefix=$PREFIX\"; "
+                + "echo \"python=$(command -v python 2>/dev/null || true)\"; "
+                + "python -V 2>&1 || true; "
+                + "echo '--- ROOT ---'; "
+                + "su -c id 2>&1 || true; "
+                + "echo '--- SAVAGE ---'; "
+                + "if [ -f " + SAVAGE_ROOT + "/savage-family/savage/cli.py ]; "
+                + "then echo 'core: READY'; else echo 'core: MISSING'; fi; "
+                + "if [ -f " + SAVAGE_ROOT + "/models/Qwen3-1.7B-abliterated-Q4_K_M.gguf ]; "
+                + "then echo 'model: READY'; else echo 'model: MISSING'; fi; "
+                + "if [ -x " + SAVAGE_ROOT + "/bin/llama/llama-cli ]; "
+                + "then echo 'llama.cpp: READY'; else echo 'llama.cpp: MISSING'; fi";
 
-    private Process startRootProcess(String command) throws Exception {
-        // Android app processes do not inherit Termux's PATH. KernelSU/Magisk-style
-        // su may still be mounted at an absolute system path, so probe those first.
-        String[] candidates = new String[] {
-                "/system/bin/su",
-                "/system/xbin/su",
-                "/sbin/su",
-                "/su/bin/su",
-                "/data/adb/ksu/bin/su",
-                "/debug_ramdisk/su"
-        };
-
-        Exception last = null;
-
-        for (String candidate : candidates) {
-            try {
-                ProcessBuilder pb = new ProcessBuilder(candidate, "-c", command);
-                pb.redirectErrorStream(true);
-                return pb.start();
-            } catch (Exception e) {
-                last = e;
-            }
-        }
-
-        // Final fallback: ask Android's system shell to resolve su from a broad PATH.
-        try {
-            ProcessBuilder pb = new ProcessBuilder(
-                    "/system/bin/sh",
-                    "-c",
-                    "export PATH=/system/bin:/system/xbin:/sbin:/su/bin:/data/adb/ksu/bin:$PATH; " +
-                    "exec su -c \"$1\"",
-                    "sh",
-                    command
-            );
-            pb.redirectErrorStream(true);
-            return pb.start();
-        } catch (Exception e) {
-            last = e;
-        }
-
-        throw new java.io.IOException(
-                "No root su binary found. Checked KernelSU/system su paths.",
-                last
-        );
-    }
-
-    private String runRoot(String command) throws Exception {
-        Process process = startRootProcess(command);
-        currentProcess = process;
-
-        StringBuilder sb = new StringBuilder();
-        try (BufferedReader br = new BufferedReader(
-                new InputStreamReader(process.getInputStream()))) {
-            String line;
-            while ((line = br.readLine()) != null) {
-                if (sb.length() < 65536) {
-                    sb.append(line).append('\n');
-                }
-            }
-        }
-
-        int rc = process.waitFor();
-        currentProcess = null;
-
-        if (sb.length() == 0) {
-            sb.append("(no output; rc=").append(rc).append(")");
-        }
-        return sb.toString().trim();
+        runInTermux("status", script);
     }
 
     private void stopInference() {
-        Process p = currentProcess;
-        if (p != null) p.destroy();
+        send.setEnabled(true);
+        status.setText("STOPPING…");
+        runInTermux("stop",
+                "pkill -INT -f '/data/local/savage-ai/bin/llama/llama-cli' 2>/dev/null || true; "
+                + "echo 'STOP sent'");
+    }
 
-        worker.execute(() -> {
-            try {
-                runRoot("pkill -INT -f '/data/local/savage-ai/bin/llama/llama-cli' 2>/dev/null || true");
-            } catch (Exception ignored) {
-            }
+    private void runInTermux(String kind, String script) {
+        if (Build.VERSION.SDK_INT >= 23 &&
+                checkSelfPermission(TERMUX_PERMISSION) != PackageManager.PERMISSION_GRANTED) {
+            status.setText("TERMUX PERMISSION");
+            backend.setText("backend: blocked");
+            append("\nMissing Termux RUN_COMMAND permission.\n");
+            ensureTermuxPermission();
+            return;
+        }
 
-            runOnUiThread(() -> {
-                append("\n[STOP requested]\n");
-                setBusy(false);
-            });
-        });
+        int executionId = EXECUTION_ID.getAndIncrement();
+
+        Intent callbackIntent = new Intent(this, PluginResultsService.class);
+        callbackIntent.putExtra("execution_id", executionId);
+        callbackIntent.putExtra("request_kind", kind);
+
+        int flags = PendingIntent.FLAG_ONE_SHOT;
+        if (Build.VERSION.SDK_INT >= 31) flags |= PendingIntent.FLAG_MUTABLE;
+
+        PendingIntent pendingIntent = PendingIntent.getService(
+                this, executionId, callbackIntent, flags);
+
+        Intent intent = new Intent();
+        intent.setClassName(TERMUX_PACKAGE, TERMUX_SERVICE);
+        intent.setAction(TERMUX_ACTION);
+        intent.putExtra(EXTRA_PATH, "$PREFIX/bin/bash");
+        intent.putExtra(EXTRA_ARGUMENTS, new String[]{"-lc", script});
+        intent.putExtra(EXTRA_WORKDIR, "~/");
+        intent.putExtra(EXTRA_BACKGROUND, true);
+        intent.putExtra(EXTRA_PENDING_INTENT, pendingIntent);
+
+        try {
+            startService(intent);
+        } catch (SecurityException e) {
+            status.setText("TERMUX SETUP");
+            backend.setText("backend: blocked");
+            append("\nTermux rejected RUN_COMMAND. In Termux set allow-external-apps=true, "
+                    + "reload settings, then grant Savage AI the Termux command permission.\n");
+            setBusy(false);
+        } catch (Exception e) {
+            status.setText("TERMUX OFFLINE");
+            backend.setText("backend: unavailable");
+            append("\nCould not start Termux command service: " + e.getMessage() + "\n");
+            setBusy(false);
+        }
+    }
+
+    public static void deliverTermuxResult(
+            String kind, String stdout, String stderr,
+            int exitCode, int errCode, String errMsg) {
+
+        MainActivity activity = activeActivity.get();
+        if (activity == null) return;
+
+        activity.runOnUiThread(() ->
+                activity.handleTermuxResult(kind, stdout, stderr, exitCode, errCode, errMsg));
+    }
+
+    private void handleTermuxResult(
+            String kind, String stdout, String stderr,
+            int exitCode, int errCode, String errMsg) {
+
+        String out = stdout == null ? "" : stdout.trim();
+        String err = stderr == null ? "" : stderr.trim();
+        String internal = errMsg == null ? "" : errMsg.trim();
+
+        if ("status".equals(kind)) {
+            String combined = out + "\n" + err + "\n" + internal;
+
+            boolean termux = combined.contains("prefix=") && combined.contains("python=");
+            boolean root = combined.contains("uid=0");
+            boolean savage = combined.contains("core: READY")
+                    && combined.contains("model: READY")
+                    && combined.contains("llama.cpp: READY");
+
+            boolean ok = exitCode == 0 && errCode <= 0 && termux && root && savage;
+
+            status.setText(ok ? "ROOT • READY" : "SETUP ISSUE");
+            status.setBackground(roundRect(
+                    ok ? ACCENT_DARK : Color.rgb(84, 43, 46),
+                    ok ? ACCENT_DARK : Color.rgb(84, 43, 46),
+                    99));
+            backend.setText(termux ? "backend: Termux native" : "backend: unavailable");
+
+            if (!out.isEmpty()) append("\n" + out + "\n");
+            if (!err.isEmpty()) append("\nstderr:\n" + err + "\n");
+            if (!internal.isEmpty()) append("\nTermux: " + internal + "\n");
+            return;
+        }
+
+        if ("stop".equals(kind)) {
+            append("\n" + (out.isEmpty() ? "[STOP sent]" : out) + "\n");
+            setBusy(false);
+            return;
+        }
+
+        if (!out.isEmpty()) append(out + "\n");
+        if (!err.isEmpty()) append("stderr:\n" + err + "\n");
+        if (!internal.isEmpty()) append("Termux: " + internal + "\n");
+
+        if (exitCode != 0 || errCode > 0) {
+            append("[exit=" + exitCode + ", termuxErr=" + errCode + "]\n");
+        }
+
+        setBusy(false);
     }
 
     private void setBusy(boolean busy) {
         send.setEnabled(!busy);
         send.setAlpha(busy ? 0.55f : 1f);
         status.setText(busy ? "THINKING…" : "ROOT • READY");
-        backend.setText(busy ? "backend: llama.cpp" : backend.getText());
+        backend.setText(busy ? "backend: Termux + llama.cpp" : "backend: Termux native");
     }
 
     private void append(String s) {
         output.append(s);
-        scroll.post(() -> scroll.fullScroll(View.FOCUS_DOWN));
-    }
-
-    private String extractPythonPath(String text) {
-        String marker = "python: READY (";
-        int start = text.indexOf(marker);
-        if (start < 0) return "";
-        start += marker.length();
-        int end = text.indexOf(')', start);
-        if (end < 0) return "";
-        return text.substring(start, end);
-    }
-
-    private String shortPath(String path) {
-        if (path.contains("termux")) return "Termux Python";
-        if (path.contains("/venv/")) return "Savage venv";
-        return "local Python";
+        scroll.post(() -> scroll.fullScroll(ScrollView.FOCUS_DOWN));
     }
 
     private int dp(int value) {
         return (int) (value * getResources().getDisplayMetrics().density + 0.5f);
-    }
-
-    @Override
-    protected void onDestroy() {
-        Process p = currentProcess;
-        if (p != null) p.destroy();
-        worker.shutdownNow();
-        super.onDestroy();
     }
 }
