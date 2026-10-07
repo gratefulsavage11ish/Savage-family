@@ -35,8 +35,17 @@ jobs:
       - name: Ensure Android SDK 35
         shell: bash
         run: |
-          yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager "platforms;android-35" "build-tools;35.0.0"
+          SDKROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+          echo "Android SDK root: $SDKROOT"
+          SDKMANAGER="$(find "$SDKROOT" -type f -name sdkmanager 2>/dev/null | head -n1)"
+          if [ -z "$SDKMANAGER" ]; then
+            echo "sdkmanager not found under $SDKROOT"
+            find "$SDKROOT" -maxdepth 4 -type f | head -100
+            exit 1
+          fi
+          echo "Using: $SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" "platforms;android-35" "build-tools;35.0.0"
 
       - name: Build debug APK
         working-directory: android
