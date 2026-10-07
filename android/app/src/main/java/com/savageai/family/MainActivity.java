@@ -20,6 +20,8 @@ import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
+import android.widget.Spinner;
+import android.widget.ArrayAdapter;
 
 import java.lang.ref.WeakReference;
 import java.nio.charset.StandardCharsets;
@@ -57,6 +59,7 @@ public class MainActivity extends Activity {
     private EditText input;
     private Button send;
     private ScrollView scroll;
+    private Spinner modelSpinner;
 
     @Override
     protected void onCreate(Bundle state) {
@@ -122,6 +125,35 @@ public class MainActivity extends Activity {
         statusRow.addView(backend, backendLp);
 
         root.addView(header);
+
+        LinearLayout modelRow = new LinearLayout(this);
+        modelRow.setOrientation(LinearLayout.HORIZONTAL);
+        modelRow.setGravity(Gravity.CENTER_VERTICAL);
+        modelRow.setPadding(dp(2), 0, dp(2), dp(10));
+
+        TextView modelLabel = new TextView(this);
+        modelLabel.setText("MODEL");
+        modelLabel.setTextColor(MUTED);
+        modelLabel.setTextSize(10);
+        modelLabel.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
+        modelRow.addView(modelLabel);
+
+        modelSpinner = new Spinner(this);
+        String[] modelChoices = new String[]{"AUTO", "GENERAL", "CODE", "RECON", "REMOTE"};
+        ArrayAdapter<String> modelAdapter = new ArrayAdapter<>(
+                this,
+                android.R.layout.simple_spinner_item,
+                modelChoices
+        );
+        modelAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        modelSpinner.setAdapter(modelAdapter);
+        modelSpinner.setSelection(0);
+
+        LinearLayout.LayoutParams spinnerLp = new LinearLayout.LayoutParams(
+                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
+        spinnerLp.leftMargin = dp(12);
+        modelRow.addView(modelSpinner, spinnerLp);
+        root.addView(modelRow);
 
         LinearLayout consoleCard = new LinearLayout(this);
         consoleCard.setOrientation(LinearLayout.VERTICAL);
@@ -309,8 +341,13 @@ public class MainActivity extends Activity {
         String b64 = Base64.encodeToString(
                 prompt.getBytes(StandardCharsets.UTF_8), Base64.NO_WRAP);
 
+        String profile = modelSpinner == null
+                ? "auto"
+                : modelSpinner.getSelectedItem().toString().toLowerCase();
+
         String script =
-                "export SAVAGE_PROMPT_B64='" + b64 + "'; "
+                "export SAVAGE_MODEL_PROFILE='" + profile + "'; "
+                + "export SAVAGE_PROMPT_B64='" + b64 + "'; "
                 + "BRIDGE=\"$HOME/.local/bin/savage-app-bridge\"; "
                 + "if [ ! -x \"$BRIDGE\" ]; then "
                 + "echo 'SAVAGE BRIDGE MISSING: install it from Termux'; exit 127; "
@@ -324,8 +361,13 @@ public class MainActivity extends Activity {
         status.setText("CHECKING…");
         backend.setText("backend: Termux");
 
+        String profile = modelSpinner == null
+                ? "auto"
+                : modelSpinner.getSelectedItem().toString().toLowerCase();
+
         String script =
-                "BRIDGE=\"$HOME/.local/bin/savage-app-bridge\"; "
+                "export SAVAGE_MODEL_PROFILE='" + profile + "'; "
+                + "BRIDGE=\"$HOME/.local/bin/savage-app-bridge\"; "
                 + "if [ ! -x \"$BRIDGE\" ]; then "
                 + "echo 'SAVAGE BRIDGE MISSING: install it from Termux'; exit 127; "
                 + "fi; "
