@@ -1,0 +1,1 @@
+Savage AI Android v0.2.0 uses Termux RUN_COMMAND so Savage executes inside the real Termux environment.
