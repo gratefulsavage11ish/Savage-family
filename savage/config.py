@@ -56,8 +56,8 @@ class Config:
         for d in ("config", "memory", "logs", "models", "skills", "bin", "tmp"):
             os.makedirs(self.path(d), exist_ok=True)
 
-    def get(self, k):
-        return self.settings[k]
+    def get(self, k, default=None):
+        return self.settings.get(k, default)
 
 
 def setup_logging(cfg):
