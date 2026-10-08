@@ -45,6 +45,24 @@ ensure_mount || exit $?
 export SAVAGE_AI_ROOT="$ROOT"
 export PYTHONPATH="$ROOT/savage-family"
 
+sync_components() {
+    local src="$ROOT/savage-family/android/termux"
+
+    mkdir -p "$HOME/.local/bin" "$HOME/.local/lib"
+
+    if [ ! -s "$RUNNER" ] && [ -s "$src/savage-app-runner.py" ]; then
+        cp "$src/savage-app-runner.py" "$RUNNER"
+        chmod 644 "$RUNNER"
+    fi
+
+    if [ ! -s "$RUNTIME" ] && [ -s "$src/savage_model_runtime.py" ]; then
+        cp "$src/savage_model_runtime.py" "$RUNTIME"
+        chmod 644 "$RUNTIME"
+    fi
+}
+
+sync_components
+
 mode="${1:-status}"
 
 case "$mode" in
@@ -66,15 +84,15 @@ case "$mode" in
         [ -f "$ROOT/memory/savage.db" ] && ls -lh "$ROOT/memory/savage.db" || echo "memory: MISSING"
 
         echo "--- MODEL RUNTIME ---"
-        if [ -f "$RUNTIME" ]; then
+        if [ -s "$RUNTIME" ]; then
             python "$RUNTIME" status
         else
-            echo "runtime: MISSING"
+            echo "runtime: MISSING ($RUNTIME)"
         fi
         ;;
 
     prompt)
-        [ -f "$RUNNER" ] || {
+        [ -s "$RUNNER" ] || {
             echo "SAVAGE ERROR: runner missing: $RUNNER"
             exit 24
         }
