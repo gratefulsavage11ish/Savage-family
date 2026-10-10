@@ -390,8 +390,8 @@ def hf_list_models(search="", limit=100):
 
     out.sort(
         key=lambda x: (
-            1 if x["free"] else 0,
             x["throughput"],
+            1 if x["free"] else 0,
         ),
         reverse=True,
     )
