@@ -91,6 +91,22 @@ case "$mode" in
         exec python "$RUNNER"
         ;;
 
+    hf_models)
+        [ -s "$RUNTIME" ] || {
+            echo "SAVAGE ERROR: runtime missing: $RUNTIME"
+            exit 26
+        }
+        exec python "$RUNTIME" hf-models
+        ;;
+
+    hf_select)
+        [ -s "$RUNTIME" ] || {
+            echo "SAVAGE ERROR: runtime missing: $RUNTIME"
+            exit 26
+        }
+        exec python "$RUNTIME" hf-select
+        ;;
+
     stop)
         pkill -INT -f "$ROOT/bin/llama/llama-cli" 2>/dev/null || true
         if [ -s "$RUNTIME" ]; then
