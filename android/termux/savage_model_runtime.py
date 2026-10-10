@@ -200,8 +200,8 @@ def ensure_local_server(profile_name, profile):
             raise RuntimeError(f"model missing: {model}")
 
         port = int(profile.get("port", 8081))
-        context = int(profile.get("context_size", 1536))
-        threads = int(profile.get("threads", 4))
+        context = int(profile.get("context_size", 768))
+        threads = int(profile.get("threads", 2))
 
         wanted = {
             "profile": profile_name,
@@ -397,6 +397,17 @@ class RegistryProvider:
 def runtime_status():
     reg = ensure_registry()
     st = read_state()
+
+    # A killed Android/Termux process can leave a stale JSON state file.
+    # Treat a dead PID as stopped and remove the stale marker.
+    pid = st.get("pid")
+    if pid and not pid_alive(pid):
+        try:
+            STATE.unlink()
+        except FileNotFoundError:
+            pass
+        st = {}
+
     out = {
         "registry": str(REGISTRY),
         "profiles": list(reg["profiles"].keys()),
