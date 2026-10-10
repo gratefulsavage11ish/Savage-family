@@ -1,6 +1,7 @@
 package com.savageai.family;
 
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.app.PendingIntent;
 import android.content.Intent;
 import android.content.pm.PackageManager;
@@ -18,13 +19,19 @@ import android.view.WindowManager;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
+import android.widget.ListView;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Spinner;
 import android.widget.ArrayAdapter;
 
+import org.json.JSONArray;
+import org.json.JSONObject;
+
 import java.lang.ref.WeakReference;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class MainActivity extends Activity {
@@ -139,7 +146,7 @@ public class MainActivity extends Activity {
         modelRow.addView(modelLabel);
 
         modelSpinner = new Spinner(this);
-        String[] modelChoices = new String[]{"AUTO", "HF_FAST", "HF_CODE", "HF_REASONING", "GENERAL", "CODE", "RECON"};
+        String[] modelChoices = new String[]{"AUTO", "HF_CUSTOM", "HF_FAST", "HF_CODE", "HF_REASONING", "GENERAL", "CODE", "RECON"};
         ArrayAdapter<String> modelAdapter = new ArrayAdapter<>(
                 this,
                 android.R.layout.simple_spinner_item,
@@ -153,6 +160,12 @@ public class MainActivity extends Activity {
                 0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
         spinnerLp.leftMargin = dp(12);
         modelRow.addView(modelSpinner, spinnerLp);
+
+        Button browseModels = makeButton("HF MODELS", false, false);
+        LinearLayout.LayoutParams browseLp = new LinearLayout.LayoutParams(dp(112), dp(42));
+        browseLp.leftMargin = dp(8);
+        modelRow.addView(browseModels, browseLp);
+
         root.addView(modelRow);
 
         LinearLayout consoleCard = new LinearLayout(this);
@@ -228,6 +241,7 @@ public class MainActivity extends Activity {
         setContentView(root);
 
         send.setOnClickListener(v -> submit());
+        browseModels.setOnClickListener(v -> browseHfModels());
         check.setOnClickListener(v -> checkEnvironment());
         stop.setOnClickListener(v -> stopInference());
         clear.setOnClickListener(v -> output.setText(""));
@@ -376,6 +390,111 @@ public class MainActivity extends Activity {
         runInTermux("status", script);
     }
 
+
+    private void browseHfModels() {
+        status.setText("LOADING HF…");
+        backend.setText("backend: Hugging Face catalog");
+
+        String script =
+                "BRIDGE=\"$HOME/.local/bin/savage-app-bridge\"; "
+                + "if [ ! -x \"$BRIDGE\" ]; then "
+                + "echo 'SAVAGE BRIDGE MISSING'; exit 127; "
+                + "fi; "
+                + "exec \"$BRIDGE\" hf_models";
+
+        runInTermux("hf_models", script);
+    }
+
+    private void selectHfModel(String modelId) {
+        String b64 = Base64.encodeToString(
+                modelId.getBytes(StandardCharsets.UTF_8), Base64.NO_WRAP);
+
+        status.setText("SELECTING HF…");
+        backend.setText("backend: " + modelId);
+
+        String script =
+                "export SAVAGE_HF_MODEL_B64='" + b64 + "'; "
+                + "BRIDGE=\"$HOME/.local/bin/savage-app-bridge\"; "
+                + "if [ ! -x \"$BRIDGE\" ]; then "
+                + "echo 'SAVAGE BRIDGE MISSING'; exit 127; "
+                + "fi; "
+                + "exec \"$BRIDGE\" hf_select";
+
+        runInTermux("hf_select", script);
+    }
+
+    private void showHfModels(String json) {
+        try {
+            JSONArray rows = new JSONArray(json);
+            List<String> labels = new ArrayList<>();
+            List<String> ids = new ArrayList<>();
+
+            for (int i = 0; i < rows.length(); i++) {
+                JSONObject row = rows.getJSONObject(i);
+                String id = row.optString("id", "").trim();
+                if (id.isEmpty()) continue;
+
+                double speed = row.optDouble("throughput", 0);
+                double latency = row.optDouble("latency_ms", -1);
+                String provider = row.optString("provider", "");
+                boolean free = row.optBoolean("free", false);
+                boolean tools = row.optBoolean("tools", false);
+
+                StringBuilder meta = new StringBuilder();
+                if (speed > 0) meta.append(String.format("%.1f tok/s", speed));
+                if (latency >= 0) {
+                    if (meta.length() > 0) meta.append(" • ");
+                    meta.append(String.format("%.0f ms TTFT", latency));
+                }
+                if (!provider.isEmpty()) {
+                    if (meta.length() > 0) meta.append(" • ");
+                    meta.append(provider);
+                }
+                if (free) meta.append(" • FREE");
+                if (tools) meta.append(" • TOOLS");
+
+                ids.add(id);
+                labels.add(id + (meta.length() > 0 ? "\n" + meta : ""));
+            }
+
+            if (ids.isEmpty()) {
+                append("\nNo live Hugging Face chat models were returned.\n");
+                status.setText("HF EMPTY");
+                return;
+            }
+
+            String[] items = labels.toArray(new String[0]);
+
+            new AlertDialog.Builder(this)
+                    .setTitle("Hugging Face models — fastest first")
+                    .setItems(items, (dialog, which) -> {
+                        String selected = ids.get(which);
+                        append("\nHF model selected: " + selected + "\n");
+                        selectHfModel(selected);
+                    })
+                    .setNegativeButton("CANCEL", null)
+                    .show();
+
+            status.setText("HF MODELS");
+            backend.setText("backend: Hugging Face");
+        } catch (Exception e) {
+            status.setText("HF ERROR");
+            append("\nCould not parse Hugging Face model catalog: "
+                    + e.getMessage() + "\n");
+        }
+    }
+
+    private void selectSpinnerItem(String value) {
+        if (modelSpinner == null || value == null) return;
+        for (int i = 0; i < modelSpinner.getCount(); i++) {
+            Object item = modelSpinner.getItemAtPosition(i);
+            if (item != null && value.equalsIgnoreCase(item.toString())) {
+                modelSpinner.setSelection(i);
+                return;
+            }
+        }
+    }
+
     private void stopInference() {
         send.setEnabled(true);
         status.setText("STOPPING…");
@@ -455,6 +574,36 @@ public class MainActivity extends Activity {
         String out = stdout == null ? "" : stdout.trim();
         String err = stderr == null ? "" : stderr.trim();
         String internal = errMsg == null ? "" : errMsg.trim();
+
+
+        if ("hf_models".equals(kind)) {
+            if (exitCode == 0 && errCode <= 0 && !out.isEmpty()) {
+                showHfModels(out);
+            } else {
+                status.setText("HF ERROR");
+                backend.setText("backend: Hugging Face unavailable");
+                if (!err.isEmpty()) append("\nstderr:\n" + err + "\n");
+                if (!internal.isEmpty()) append("\nTermux: " + internal + "\n");
+                if (out.isEmpty()) append("\nNo Hugging Face models returned.\n");
+                else append("\n" + out + "\n");
+            }
+            return;
+        }
+
+        if ("hf_select".equals(kind)) {
+            if (exitCode == 0 && errCode <= 0) {
+                selectSpinnerItem("HF_CUSTOM");
+                status.setText("HF • READY");
+                backend.setText("backend: selected HF model");
+                if (!out.isEmpty()) append("\n" + out + "\n");
+            } else {
+                status.setText("HF ERROR");
+                if (!out.isEmpty()) append("\n" + out + "\n");
+                if (!err.isEmpty()) append("\nstderr:\n" + err + "\n");
+                if (!internal.isEmpty()) append("\nTermux: " + internal + "\n");
+            }
+            return;
+        }
 
         if ("status".equals(kind)) {
             String combined = out + "\n" + err + "\n" + internal;
