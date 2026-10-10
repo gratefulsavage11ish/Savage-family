@@ -60,6 +60,30 @@ DEFAULT_REGISTRY = {
             "temperature": 0.35,
             "port": 8081
         },
+        "hf_fast": {
+            "backend": "openai",
+            "base_url": "https://router.huggingface.co/v1",
+            "model": "openai/gpt-oss-120b:fastest",
+            "api_key_env": "HF_TOKEN",
+            "max_tokens": 320,
+            "temperature": 0.55
+        },
+        "hf_code": {
+            "backend": "openai",
+            "base_url": "https://router.huggingface.co/v1",
+            "model": "Qwen/Qwen3-Coder-480B-A35B-Instruct:fastest",
+            "api_key_env": "HF_TOKEN",
+            "max_tokens": 420,
+            "temperature": 0.2
+        },
+        "hf_reasoning": {
+            "backend": "openai",
+            "base_url": "https://router.huggingface.co/v1",
+            "model": "Qwen/Qwen3-4B-Thinking-2507:fastest",
+            "api_key_env": "HF_TOKEN",
+            "max_tokens": 420,
+            "temperature": 0.35
+        },
         "remote": {
             "backend": "openai",
             "base_url": "http://127.0.0.1:8088/v1",
@@ -81,7 +105,29 @@ def ensure_registry():
     ensure_dirs()
     if not REGISTRY.exists():
         REGISTRY.write_text(json.dumps(DEFAULT_REGISTRY, indent=2) + "\n")
-    return load_registry()
+        return load_registry()
+
+    data = load_registry()
+    changed = False
+
+    if "schema" not in data:
+        data["schema"] = DEFAULT_REGISTRY["schema"]
+        changed = True
+
+    if "default_profile" not in data:
+        data["default_profile"] = DEFAULT_REGISTRY["default_profile"]
+        changed = True
+
+    profiles = data.setdefault("profiles", {})
+    for name, default_profile in DEFAULT_REGISTRY["profiles"].items():
+        if name not in profiles:
+            profiles[name] = default_profile
+            changed = True
+
+    if changed:
+        REGISTRY.write_text(json.dumps(data, indent=2) + "\n")
+
+    return data
 
 
 def load_registry():
@@ -103,10 +149,24 @@ def choose_profile(requested: str, prompt: str) -> str:
         return req
 
     low = (prompt or "").lstrip().lower()
-    if low.startswith("code:") and "code" in profiles:
-        return "code"
+    hf_ready = bool(os.environ.get("HF_TOKEN"))
+
+    if low.startswith("code:"):
+        if hf_ready and "hf_code" in profiles:
+            return "hf_code"
+        if "code" in profiles:
+            return "code"
+
+    if low.startswith(("reason:", "think:", "research:")):
+        if hf_ready and "hf_reasoning" in profiles:
+            return "hf_reasoning"
+
     if low.startswith("recon:") and "recon" in profiles:
         return "recon"
+
+    if hf_ready and "hf_fast" in profiles:
+        return "hf_fast"
+
     return reg.get("default_profile", "general")
 
 
@@ -305,13 +365,17 @@ class RegistryProvider:
             }
 
         if backend == "openai":
+            env_name = self.profile.get("api_key_env", "SAVAGE_REMOTE_API_KEY")
+            needs_key = bool(self.profile.get("base_url", "").startswith("https://router.huggingface.co"))
+            have_key = bool(os.environ.get(env_name))
             return {
                 "provider": self.name,
                 "profile": self.profile_name,
                 "backend": backend,
-                "status": "READY",
+                "status": "READY" if (have_key or not needs_key) else "AUTH REQUIRED",
                 "base_url": self.profile.get("base_url"),
                 "model": self.profile.get("model"),
+                "api_key_env": env_name,
             }
 
         return {
