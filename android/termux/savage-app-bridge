@@ -3,7 +3,8 @@ set -u
 
 ROOT="/data/local/savage-ai"
 IMAGE="/mnt/media_rw/FFFF-E33D/savage-ai.img"
-RUNNER="$HOME/.local/lib/savage-app-runner.py"\nRUNTIME="$HOME/.local/lib/savage_model_runtime.py"
+RUNNER="$HOME/.local/lib/savage-app-runner.py"
+RUNTIME="$HOME/.local/lib/savage_model_runtime.py"
 
 ensure_mount() {
     if [ -f "$ROOT/savage-family/savage/cli.py" ]; then
@@ -45,24 +46,6 @@ ensure_mount || exit $?
 export SAVAGE_AI_ROOT="$ROOT"
 export PYTHONPATH="$ROOT/savage-family"
 
-sync_components() {
-    local src="$ROOT/savage-family/android/termux"
-
-    mkdir -p "$HOME/.local/bin" "$HOME/.local/lib"
-
-    if [ ! -s "$RUNNER" ] && [ -s "$src/savage-app-runner.py" ]; then
-        cp "$src/savage-app-runner.py" "$RUNNER"
-        chmod 644 "$RUNNER"
-    fi
-
-    if [ ! -s "$RUNTIME" ] && [ -s "$src/savage_model_runtime.py" ]; then
-        cp "$src/savage_model_runtime.py" "$RUNTIME"
-        chmod 644 "$RUNTIME"
-    fi
-}
-
-sync_components
-
 mode="${1:-status}"
 
 case "$mode" in
@@ -92,16 +75,20 @@ case "$mode" in
         ;;
 
     prompt)
-        [ -s "$RUNNER" ] || {
+        if [ ! -s "$RUNNER" ]; then
             echo "SAVAGE ERROR: runner missing: $RUNNER"
             exit 24
-        }
+        fi
+        if [ ! -s "$RUNTIME" ]; then
+            echo "SAVAGE ERROR: runtime missing: $RUNTIME"
+            exit 26
+        fi
         exec python "$RUNNER"
         ;;
 
     stop)
         pkill -INT -f "$ROOT/bin/llama/llama-cli" 2>/dev/null || true
-        if [ -f "$RUNTIME" ]; then
+        if [ -s "$RUNTIME" ]; then
             python "$RUNTIME" stop 2>/dev/null || true
         fi
         echo "STOP sent"
