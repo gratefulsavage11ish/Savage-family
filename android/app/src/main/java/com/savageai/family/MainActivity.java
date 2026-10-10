@@ -139,7 +139,7 @@ public class MainActivity extends Activity {
         modelRow.addView(modelLabel);
 
         modelSpinner = new Spinner(this);
-        String[] modelChoices = new String[]{"AUTO", "GENERAL", "CODE", "RECON", "REMOTE"};
+        String[] modelChoices = new String[]{"AUTO", "HF_FAST", "HF_CODE", "HF_REASONING", "GENERAL", "CODE", "RECON"};
         ArrayAdapter<String> modelAdapter = new ArrayAdapter<>(
                 this,
                 android.R.layout.simple_spinner_item,
