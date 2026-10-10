@@ -84,6 +84,14 @@ DEFAULT_REGISTRY = {
             "max_tokens": 420,
             "temperature": 0.35
         },
+        "hf_custom": {
+            "backend": "openai",
+            "base_url": "https://router.huggingface.co/v1",
+            "model": "openai/gpt-oss-120b:fastest",
+            "api_key_env": "HF_TOKEN",
+            "max_tokens": 512,
+            "temperature": 0.5
+        },
         "remote": {
             "backend": "openai",
             "base_url": "http://127.0.0.1:8088/v1",
@@ -324,6 +332,92 @@ def ensure_local_server(profile_name, profile):
         raise RuntimeError("llama-server did not become ready within 120 seconds")
 
 
+
+def _hf_headers():
+    token = os.environ.get("HF_TOKEN", "").strip()
+    if not token:
+        raise RuntimeError("HF_TOKEN is not configured")
+    return {"Authorization": f"Bearer {token}"}
+
+
+def hf_list_models(search="", limit=100):
+    """Return live HF Router chat models ranked by observed provider throughput."""
+    data = http_json(
+        "https://router.huggingface.co/v1/models",
+        headers=_hf_headers(),
+        timeout=45,
+    )
+    rows = data.get("data", []) if isinstance(data, dict) else []
+    query = (search or "").strip().lower()
+    out = []
+
+    for item in rows:
+        model_id = str(item.get("id", "")).strip()
+        if not model_id:
+            continue
+        if query and query not in model_id.lower():
+            continue
+
+        providers = [
+            p for p in (item.get("providers") or [])
+            if p.get("status") == "live"
+        ]
+        if not providers:
+            continue
+
+        best = max(
+            providers,
+            key=lambda p: float(p.get("throughput") or 0),
+        )
+
+        context = max(
+            [int(p.get("context_length") or 0) for p in providers] or [0]
+        )
+        throughput = float(best.get("throughput") or 0)
+        latency = best.get("first_token_latency_ms")
+        free = any(bool(p.get("is_free")) for p in providers)
+        tools = any(bool(p.get("supports_tools")) for p in providers)
+
+        out.append({
+            "id": model_id,
+            "throughput": round(throughput, 1),
+            "latency_ms": round(float(latency), 0) if latency is not None else None,
+            "context": context or None,
+            "free": free,
+            "tools": tools,
+            "provider": best.get("provider"),
+        })
+
+    out.sort(
+        key=lambda x: (
+            1 if x["free"] else 0,
+            x["throughput"],
+        ),
+        reverse=True,
+    )
+    return out[:max(1, min(int(limit), 200))]
+
+
+def hf_select_model(model_id):
+    model_id = str(model_id or "").strip()
+    if not model_id or "/" not in model_id:
+        raise RuntimeError("invalid Hugging Face model id")
+
+    reg = ensure_registry()
+    profile = reg["profiles"].setdefault("hf_custom", {})
+    profile.update({
+        "backend": "openai",
+        "base_url": "https://router.huggingface.co/v1",
+        "model": model_id + ":fastest",
+        "api_key_env": "HF_TOKEN",
+        "max_tokens": int(profile.get("max_tokens", 512)),
+        "temperature": float(profile.get("temperature", 0.5)),
+    })
+    reg["last_hf_model"] = model_id
+    REGISTRY.write_text(json.dumps(reg, indent=2) + "\n")
+    return profile
+
+
 class RegistryProvider:
     name = "Savage model registry"
 
@@ -486,9 +580,11 @@ def runtime_status():
 
 
 if __name__ == "__main__":
+    import base64
     import sys
 
     cmd = sys.argv[1] if len(sys.argv) > 1 else "status"
+
     if cmd == "status":
         print(json.dumps(runtime_status(), indent=2))
     elif cmd == "stop":
@@ -497,5 +593,22 @@ if __name__ == "__main__":
     elif cmd == "profiles":
         reg = ensure_registry()
         print("\n".join(reg["profiles"].keys()))
+    elif cmd == "hf-models":
+        query = os.environ.get("SAVAGE_HF_SEARCH", "")
+        print(json.dumps(hf_list_models(query, 120), separators=(",", ":")))
+    elif cmd == "hf-select":
+        raw = os.environ.get("SAVAGE_HF_MODEL_B64", "")
+        if not raw:
+            raise SystemExit("SAVAGE_HF_MODEL_B64 is empty")
+        model_id = base64.b64decode(raw).decode("utf-8")
+        profile = hf_select_model(model_id)
+        print(json.dumps({
+            "selected": model_id,
+            "profile": "hf_custom",
+            "route": profile["model"],
+        }, separators=(",", ":")))
     else:
-        raise SystemExit("usage: savage_model_runtime.py [status|stop|profiles]")
+        raise SystemExit(
+            "usage: savage_model_runtime.py "
+            "[status|stop|profiles|hf-models|hf-select]"
+        )
