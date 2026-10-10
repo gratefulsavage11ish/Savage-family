@@ -46,6 +46,11 @@ ensure_mount || exit $?
 export SAVAGE_AI_ROOT="$ROOT"
 export PYTHONPATH="$ROOT/savage-family"
 
+HF_ENV="$HOME/.config/savage/hf.env"
+if [ -f "$HF_ENV" ]; then
+    . "$HF_ENV"
+fi
+
 mode="${1:-status}"
 
 case "$mode" in
